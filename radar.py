@@ -14,7 +14,7 @@ st.set_page_config(page_title="AI Defense Radar", layout="wide", page_icon="📡
 st.title("📡 AI Model Güvenlik & Gözlem Radarı")
 st.markdown("""
 **Senaryo:** Sahadaki bir İHA'nın Dost/Düşman tanıma sistemi.
-**Amaç:** Gelen sensör verilerindeki bozulmaları (Drift) tespit edip, model hata yapmadan önce operatörü uyarmak.
+**Amaç:** Sensör verilerindeki **Topyekün Karıştırmayı (Global Jamming)** ve veri kaymasını (Drift) tespit edip, model hata yapmadan önce operatörü uyarmak.
 """)
 
 # --- 1. MODEL EĞİTİMİ (SİMÜLASYON) ---
@@ -43,19 +43,35 @@ model, X_reference, X_production_base, y_production, base_acc = build_defense_mo
 
 # --- 2. SABOTAJ PANELİ (YAN MENÜ) ---
 st.sidebar.header("⚔️ Elektronik Harp (Sabotaj)")
-st.sidebar.info("Modelin sahadaki şartlarını buradan bozabilirsin.")
+st.sidebar.info("Modelin tüm sensörlerine buradan gürültü basabilirsin.")
 
 # Gürültü ve Kayma Ekleme
-noise_amount = st.sidebar.slider("Sinyal Gürültüsü (Noise)", 0.0, 5.0, 0.0, help="Sensörlere binen parazit")
-shift_amount = st.sidebar.slider("Veri Kayması (Drift)", 0.0, 5.0, 0.0, help="Düşman kamuflaj değiştirdiğinde veri kayar")
+noise_amount = st.sidebar.slider("Sinyal Gürültüsü (Noise)", 0.0, 5.0, 0.0, help="Tüm sensörlere binen parazit şiddeti")
+shift_amount = st.sidebar.slider("Veri Kayması (Drift)", 0.0, 3.0, 0.0, help="Veri dağılımını kaydırma katsayısı")
 
-# --- 3. CANLI VERİ AKIŞI ---
-# Sahadaki veriyi simüle ediyoruz (Kullanıcının bozduğu veri)
+# --- 3. CANLI VERİ AKIŞI (GLOBAL JAMMING) ---
+# Sahadaki veriyi simüle ediyoruz
 X_current = X_production_base.copy()
 
-# Seçilen bir özelliği bozalım (Örn: 'mean radius' - Hedef boyutu)
+# ARTIK TEK BİR SÜTUNU DEĞİL, TÜM VERİYİ BOZUYORUZ
+# Her özelliğin (sütunun) kendi yapısına göre gürültü ekliyoruz
+for col in X_current.columns:
+    # O sütunun standart sapmasını alıp, gürültüyü ona göre ölçekliyoruz
+    # Böylece küçük sayılar (0.01) ile büyük sayılar (1000) orantılı bozulur
+    std_dev = X_current[col].std()
+    mean_val = X_current[col].mean()
+    
+    # Gürültü üret (Noise)
+    noise = np.random.normal(0, std_dev * noise_amount, len(X_current))
+    
+    # Kayma üret (Drift)
+    shift = mean_val * shift_amount
+    
+    # Veriyi boz
+    X_current[col] = X_current[col] + noise + shift
+
+# Görselleştirme için yine sadece tek bir özelliği seçip gösterelim (Temsili)
 target_feature = 'mean radius'
-X_current[target_feature] = X_current[target_feature] + np.random.normal(0, noise_amount, len(X_current)) + shift_amount
 
 # --- 4. RADAR ANALİZİ (DRIFT TESPİTİ) ---
 st.subheader("📊 Canlı İstihbarat Analizi")
@@ -63,62 +79,17 @@ st.subheader("📊 Canlı İstihbarat Analizi")
 col1, col2 = st.columns([2, 1])
 
 with col1:
-    st.markdown(f"**Takip Edilen Sinyal:** `{target_feature}`")
+    st.markdown(f"**Spektrum Analizi:** `{target_feature}` (Temsili Kanal)")
     
-    # İki veriyi karşılaştır (Eğitim vs Şu An)
     fig, ax = plt.subplots(figsize=(10, 5))
-    
     # Referans (Yeşil - Güvenli)
     plt.hist(X_reference[target_feature], bins=30, alpha=0.5, color='green', label='Referans (Eğitim Verisi)', density=True)
-    
     # Canlı (Kırmızı - Şüpheli)
-    plt.hist(X_current[target_feature], bins=30, alpha=0.5, color='red', label='Canlı (Saha Verisi)', density=True)
+    plt.hist(X_current[target_feature], bins=30, alpha=0.5, color='red', label='Canlı (Bozuk Veri)', density=True)
     
-    plt.title("Veri Dağılım Analizi (Distribution Drift)")
+    plt.title(f"Sinyal Dağılımı: {target_feature}")
     plt.legend()
     st.pyplot(fig)
 
 with col2:
     st.markdown("### 🛡️ Durum Raporu")
-    
-    # 1. İstatistiksel Test (Kolmogorov-Smirnov)
-    # Fizikçi gibi düşün: İki dalga fonksiyonu üst üste biniyor mu?
-    stat, p_value = ks_2samp(X_reference[target_feature], X_current[target_feature])
-    
-    # Drift Skoru (0: Aynı, 1: Tamamen Farklı)
-    drift_score = stat 
-    
-    st.metric("Drift Şiddeti", f"{drift_score:.4f}", delta_color="inverse")
-    
-    # Alarm Mantığı
-    threshold = 0.15 # Eşik değer
-    
-    if drift_score > threshold:
-        st.error("🚨 KRİTİK ALARM")
-        st.markdown("**Tespit:** Veri karakteristiği bozuldu. Model güvenilmez!")
-        status = "FAIL"
-    else:
-        st.success("✅ SİSTEM STABİL")
-        st.markdown("**Tespit:** Veri akışı normal.")
-        status = "OK"
-
-# --- 5. MODEL PERFORMANS ETKİSİ ---
-st.markdown("---")
-st.subheader("🎯 Model İsabet Oranı Etkisi")
-
-# Model şu anki bozuk veriyle ne kadar başarılı?
-current_pred = model.predict(X_current)
-current_acc = accuracy_score(y_production, current_pred)
-
-col3, col4 = st.columns(2)
-
-with col3:
-    st.metric("Modelin Normal Başarısı", f"%{base_acc*100:.2f}")
-    
-with col4:
-    # Başarı düştü mü?
-    diff = current_acc - base_acc
-    st.metric("Şu Anki Başarı", f"%{current_acc*100:.2f}", delta=f"{diff*100:.2f}%")
-
-if status == "FAIL" and (base_acc - current_acc) > 0.1:
-    st.warning("⚠️ DİKKAT: Veri kayması nedeniyle modelin isabet oranı ciddi şekilde düştü. Manuel kontrole geçilmeli.")
