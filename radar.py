@@ -20,14 +20,12 @@ st.markdown("""
 # --- 1. MODEL EĞİTİMİ (SİMÜLASYON) ---
 @st.cache_resource
 def build_defense_model():
-    # Veriyi yükle (Meme Kanseri verisi -> Savunma için 'Tehdit Tespiti' olarak düşünelim)
+    # Veriyi yükle
     data = load_breast_cancer()
     df = pd.DataFrame(data.data, columns=data.feature_names)
     y = data.target
     
     # Eğitim ve Test olarak ayır
-    # X_ref: Eğitimde gördüğü "Temiz" veri
-    # X_prod: Sahaya çıktığında karşılaşacağı veri
     X_ref, X_prod, y_ref, y_prod = train_test_split(df, y, test_size=0.5, random_state=42)
     
     # Modeli eğit
@@ -50,27 +48,21 @@ noise_amount = st.sidebar.slider("Sinyal Gürültüsü (Noise)", 0.0, 5.0, 0.0, 
 shift_amount = st.sidebar.slider("Veri Kayması (Drift)", 0.0, 3.0, 0.0, help="Veri dağılımını kaydırma katsayısı")
 
 # --- 3. CANLI VERİ AKIŞI (GLOBAL JAMMING) ---
-# Sahadaki veriyi simüle ediyoruz
 X_current = X_production_base.copy()
 
-# ARTIK TEK BİR SÜTUNU DEĞİL, TÜM VERİYİ BOZUYORUZ
-# Her özelliğin (sütunun) kendi yapısına göre gürültü ekliyoruz
+# TÜM VERİYİ BOZUYORUZ (Döngü ile her sütuna gürültü ekle)
 for col in X_current.columns:
-    # O sütunun standart sapmasını alıp, gürültüyü ona göre ölçekliyoruz
-    # Böylece küçük sayılar (0.01) ile büyük sayılar (1000) orantılı bozulur
     std_dev = X_current[col].std()
     mean_val = X_current[col].mean()
     
-    # Gürültü üret (Noise)
+    # Gürültü ve Kayma üret
     noise = np.random.normal(0, std_dev * noise_amount, len(X_current))
-    
-    # Kayma üret (Drift)
     shift = mean_val * shift_amount
     
     # Veriyi boz
     X_current[col] = X_current[col] + noise + shift
 
-# Görselleştirme için yine sadece tek bir özelliği seçip gösterelim (Temsili)
+# Görselleştirme için temsili özellik
 target_feature = 'mean radius'
 
 # --- 4. RADAR ANALİZİ (DRIFT TESPİTİ) ---
@@ -82,9 +74,9 @@ with col1:
     st.markdown(f"**Spektrum Analizi:** `{target_feature}` (Temsili Kanal)")
     
     fig, ax = plt.subplots(figsize=(10, 5))
-    # Referans (Yeşil - Güvenli)
+    # Referans (Yeşil)
     plt.hist(X_reference[target_feature], bins=30, alpha=0.5, color='green', label='Referans (Eğitim Verisi)', density=True)
-    # Canlı (Kırmızı - Şüpheli)
+    # Canlı (Kırmızı)
     plt.hist(X_current[target_feature], bins=30, alpha=0.5, color='red', label='Canlı (Bozuk Veri)', density=True)
     
     plt.title(f"Sinyal Dağılımı: {target_feature}")
@@ -93,3 +85,41 @@ with col1:
 
 with col2:
     st.markdown("### 🛡️ Durum Raporu")
+    
+    # İstatistiksel Test (Kolmogorov-Smirnov)
+    stat, p_value = ks_2samp(X_reference[target_feature], X_current[target_feature])
+    drift_score = stat 
+    
+    # Metrik gösterimi (Burada hata olmaması için indentation'a dikkat ettim)
+    st.metric("Drift Şiddeti", f"{drift_score:.4f}", delta_color="inverse")
+    
+    # Alarm Mantığı
+    threshold = 0.15 
+    
+    if drift_score > threshold:
+        st.error("🚨 KRİTİK ALARM")
+        st.markdown("**Tespit:** Sensörlerde aşırı uyumsuzluk. Model kör uçuş yapıyor!")
+        status = "FAIL"
+    else:
+        st.success("✅ SİSTEM STABİL")
+        st.markdown("**Tespit:** Sinyal temiz. Operasyona devam.")
+        status = "OK"
+
+# --- 5. MODEL PERFORMANS ETKİSİ ---
+st.markdown("---")
+st.subheader("🎯 Model İsabet Oranı Etkisi")
+
+current_pred = model.predict(X_current)
+current_acc = accuracy_score(y_production, current_pred)
+
+col3, col4 = st.columns(2)
+
+with col3:
+    st.metric("Modelin Normal Başarısı", f"%{base_acc*100:.2f}")
+    
+with col4:
+    diff = current_acc - base_acc
+    st.metric("Şu Anki Başarı", f"%{current_acc*100:.2f}", delta=f"{diff*100:.2f}%")
+
+if status == "FAIL":
+    st.warning("⚠️ KRİTİK UYARI: Elektronik karıştırma nedeniyle dost/düşman tanıma yeteneği ciddi oranda düştü.")
