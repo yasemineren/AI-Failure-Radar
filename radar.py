@@ -33,7 +33,7 @@ def build_defense_model():
     model.fit(X_ref, y_ref)
     
     # Referans başarısını ölç
-    base_accuracy = accuracy_score(y_prod, model.predict(X_prod))
+    base_accuracy = accuracy_score(y_ref, model.predict(X_ref))
     
     return model, X_ref, X_prod, y_prod, base_accuracy
 
